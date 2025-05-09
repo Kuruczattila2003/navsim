@@ -8,15 +8,17 @@ from torch.optim.lr_scheduler import LRScheduler
 
 from navsim.agents.abstract_agent import AbstractAgent
 from navsim.agents.transfuser.transfuser_callback import TransfuserCallback
-from navsim.agents.transfuser.transfuser_config import TransfuserConfig
+from navsim.agents.hydra.hydra_config import TransfuserConfig
 from navsim.agents.transfuser.transfuser_features import TransfuserFeatureBuilder, TransfuserTargetBuilder
-from navsim.agents.transfuser.transfuser_loss import transfuser_loss
-from navsim.agents.transfuser.transfuser_model import TransfuserModel
-from navsim.common.dataclasses import SensorConfig
+from navsim.agents.hydra.hydra_loss import hydra_loss
+from navsim.agents.hydra.HydraModel import HydraModel
+from navsim.common.dataclasses import AgentInput, SensorConfig, Trajectory
+from navsim.agents.hydra.PlanningVocabulary import PlanningVocabulary
 from navsim.planning.training.abstract_feature_target_builder import AbstractFeatureBuilder, AbstractTargetBuilder
 
-class TransfuserAgent(AbstractAgent):
-    """Agent interface for TransFuser baseline."""
+
+class HydraAgent(AbstractAgent):
+    """Agent for HydraMDP"""
 
     def __init__(
         self,
@@ -26,8 +28,8 @@ class TransfuserAgent(AbstractAgent):
         trajectory_sampling: TrajectorySampling = TrajectorySampling(time_horizon=4, interval_length=0.5),
     ):
         """
-        Initializes TransFuser agent.
-        :param config: global config of TransFuser agent
+        Initializes HydraMDP agent.
+        :param config: global config of HydraMDP agent
         :param lr: learning rate during training
         :param checkpoint_path: optional path string to checkpoint, defaults to None
         :param trajectory_sampling: trajectory sampling specification
@@ -38,7 +40,8 @@ class TransfuserAgent(AbstractAgent):
         self._lr = lr
 
         self._checkpoint_path = checkpoint_path
-        self._transfuser_model = TransfuserModel(self._trajectory_sampling, config)
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self._hydra_model = HydraModel(self._trajectory_sampling, config, device)
 
     def name(self) -> str:
         """Inherited, see superclass."""
@@ -52,11 +55,19 @@ class TransfuserAgent(AbstractAgent):
             state_dict: Dict[str, Any] = torch.load(self._checkpoint_path, map_location=torch.device("cpu"))[
                 "state_dict"
             ]
+
+        #print("AAAAAAAAAAAAAAAAa")
+        #for k, v in state_dict.items():
+        #    if "lidar" in k and "latent" in k:
+        #        print(k)
+        #print(state_dict)
+
         self.load_state_dict({k.replace("agent.", ""): v for k, v in state_dict.items()}, strict=False)
+
 
     def get_sensor_config(self) -> SensorConfig:
         """Inherited, see superclass."""
-        # NOTE: Transfuser only uses current frame (with index 3 by default)
+        # NOTE: HydraMDP only uses current frame (with index 3 by default)
         history_steps = [3]
         return SensorConfig(
             cam_f0=history_steps,
@@ -67,7 +78,7 @@ class TransfuserAgent(AbstractAgent):
             cam_r1=False,
             cam_r2=False,
             cam_b0=False,
-            lidar_pc=False,
+            lidar_pc=history_steps if not self._config.latent else False,
         )
 
     def get_target_builders(self) -> List[AbstractTargetBuilder]:
@@ -80,7 +91,7 @@ class TransfuserAgent(AbstractAgent):
 
     def forward(self, features: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """Inherited, see superclass."""
-        return self._transfuser_model(features)
+        return self._hydra_model(features)
 
     def compute_loss(
         self,
@@ -89,14 +100,64 @@ class TransfuserAgent(AbstractAgent):
         predictions: Dict[str, torch.Tensor],
     ) -> torch.Tensor:
         """Inherited, see superclass."""
-        return transfuser_loss(targets, predictions, self._config)
+        return hydra_loss(targets, predictions, self._config)
 
     def get_optimizers(
         self,
     ) -> Union[Optimizer, Dict[str, Union[Optimizer, LRScheduler]]]:
         """Inherited, see superclass."""
-        return torch.optim.Adam(self._transfuser_model.parameters(), lr=self._lr)
+
+        return torch.optim.Adam(self._hydra_model.parameters(), lr=self._lr)
 
     def get_training_callbacks(self) -> List[pl.Callback]:
         """Inherited, see superclass."""
-        return [TransfuserCallback(self._config)]
+        return None
+        #return [TransfuserCallback(self._config)]
+    
+    """
+    def compute_trajectory(self, agent_input: AgentInput) -> Trajectory:
+        #Computes the ego vehicle trajectory.
+        #:param current_input: Dataclass with agent inputs.
+        #:return: Trajectory representing the predicted ego's position in future
+        self.eval()
+        features: Dict[str, torch.Tensor] = {}
+        # build features
+        for builder in self.get_feature_builders():
+            features.update(builder.compute_features(agent_input))
+
+        # add batch dimension
+        features = {k: v.unsqueeze(0) for k, v in features.items()}
+        
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        features = {k: v.to(device) for k, v in features.items()}
+
+        # forward pass
+        with torch.no_grad():
+            weights = {"imitation_weight": 1}
+
+            predictions = self.forward(features)
+            imitation_scores = predictions["imitation_score"]
+
+            imitation_weight = weights["imitation_weight"]
+            weights = torch.tensor(imitation_weight, dtype=imitation_scores.dtype, device=imitation_scores.device).unsqueeze(0)
+
+            inference_scores = - (
+                #weights * torch.log(imitation_scores)
+                torch.log(imitation_scores)
+            )
+
+
+            inference_scores[inference_scores.isnan()] = 1e9 
+
+            
+            _min_value, min_index = inference_scores.min(dim=1)
+            print("Minimum inference_scores: ", min_index, ", ", _min_value)
+            print(inference_scores)
+            poses = predictions["trajectory"][min_index].squeeze(0).cpu().numpy()
+
+            poses = poses.squeeze(0)
+            
+
+        # extract trajectory
+        return Trajectory(poses, self._trajectory_sampling)
+        """

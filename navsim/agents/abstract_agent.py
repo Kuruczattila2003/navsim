@@ -75,10 +75,13 @@ class AbstractAgent(torch.nn.Module, ABC):
         # add batch dimension
         features = {k: v.unsqueeze(0) for k, v in features.items()}
 
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        features = {k: v.to(device) for k, v in features.items()}
+
         # forward pass
         with torch.no_grad():
             predictions = self.forward(features)
-            poses = predictions["trajectory"].squeeze(0).numpy()
+            poses = predictions["trajectory"].squeeze(0).cpu().numpy()
 
         # extract trajectory
         return Trajectory(poses, self._trajectory_sampling)

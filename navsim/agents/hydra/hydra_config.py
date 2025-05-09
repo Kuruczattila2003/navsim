@@ -10,8 +10,8 @@ from nuplan.common.maps.abstract_map import SemanticMapLayer
 class TransfuserConfig:
     """Global TransFuser config."""
 
-    image_architecture: str = "resnet18"
-    lidar_architecture: str = "resnet18"
+    image_architecture: str = "resnet34"
+    lidar_architecture: str = "resnet34"
 
     latent: bool = True
     latent_rad_thresh: float = 4 * np.pi / 9
@@ -62,13 +62,18 @@ class TransfuserConfig:
     use_semantic = False
     use_depth = False
     add_features = True
-
+#
     # Transformer
     tf_d_model: int = 256
     tf_d_ffn: int = 1024
-    tf_num_layers: int = 3
+    tf_num_layers: int = 4
     tf_num_head: int = 8
-    tf_dropout: float = 0.0
+    tf_dropout: float = 0.15
+    #tf_d_model: int = 128
+    #tf_d_ffn: int = 512
+    #tf_num_layers: int = 2
+    #tf_num_head: int = 4
+    #tf_dropout: float = 0.0
 
     # detection
     num_bounding_boxes: int = 30
